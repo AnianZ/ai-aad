@@ -55,7 +55,7 @@ embedding_model = os.getenv("AZURE_OPENAI_EMBEDDING_MODEL")
 
 # use an embeddingsmodel to create embeddings
 def get_embedding(text, model=embedding_model):
-    return client.embeddings.create(input = [text], model=model).data[0].embedding
+    return client.embeddings.create(input = [text], model=model, dimensions=1536).data[0].embedding
 
 credential = None
 if "AZURE_AI_SEARCH_KEY" in os.environ:
@@ -83,28 +83,64 @@ async def ask_question(ask: Ask):
     """
     Ask a question
     """
+    print('----------------------------------------------------')
+    print(f"""Question: {ask.question}, Type: {ask.type}""")
 
-    # This is not using a semantic search, but a simple search
-    results = list(search_client.search(
-        search_text=ask.question,
-        query_type="simple",
-        include_total_count=True,
-        top=5
+
+    vector = VectorizedQuery(vector=get_embedding(ask.question), k_nearest_neighbors=5, fields="vector")
+
+    found_docs = list(search_client.search(
+        search_text=None,
+        query_type="semantic",
+        semantic_configuration_name="movies-semantic-config",
+        vector_queries=[vector],
+        select=["title", "genre", "plot", "year", "rating"],
+        top=10
     ))
+
+    results = ""
+    for i, doc in enumerate(found_docs, 1):
+        results += f'{i}. Title: {doc["title"]}, Genre: {doc["genre"]}, Plot: {doc["plot"]}, Year: {doc["year"]}, Rating: {doc["rating"]}\n'
 
     print('Search results:')
     print(results)
 
-    # Send a completion call to generate an answer
-    print('Sending a request to openai')
-    start_phrase = ask.question
+    system_prompt = ""
+
+    if ask.type == QuestionType.multiple_choice:
+        print('Multiple choice question')
+        system_prompt ="""You are a question answering bot. Answer the question exclusively based on the context provided below. Do NOT include the index of the answer (so e.g. instead of "1) Blue" just "Blue"). 
+
+# Examples for answer format:
+Question: Which movie features a plot where a girl named Dorothy is transported to a magical land? 1) Cinderella 2) The Wizard of Oz
+Answer: The Wizard of Oz
+"""
+
+    elif ask.type == QuestionType.true_or_false:
+        print('True or false question')
+        system_prompt ="""You are a question answering bot. Answer the question exclusively based on the context provided below with either True or False.
+
+# Examples for answer format:
+Question: Is Yoda a character from the Star Trek universe: True or False?
+Answer: false"""
+
+    elif ask.type == QuestionType.estimation:
+        print('Estimation question')
+        system_prompt ="""You are a question answering bot. Answer the question exclusively based on the context provided below with only the number, no unit or other words. Give the shortest possible answer.
+
+# Examples for answer format:
+Question: How many movies are there in 'The Lord of the Rings'?
+Answer: 3"""
+
+    parameters = [system_prompt, '\n# Context:\n', results, '\n# Question:\n', ask.question]
+    joined_parameters = ''.join(parameters)
+
     response = client.chat.completions.create(
         model = deployment_name,
-        messages = [{"role" : "assistant", "content" : start_phrase}],
+        messages = [{"role" : "system", "content" : joined_parameters}, {"role": "assistant", "content": "Answer: "}],
     )
-
-    print(response.choices[0].message.content)
-    print(response)
+    
+    print("Answer: ", response.choices[0].message.content)
     answer = Answer(answer=response.choices[0].message.content)
     answer.correlationToken = ask.correlationToken
     answer.promptTokensUsed = response.usage.prompt_tokens

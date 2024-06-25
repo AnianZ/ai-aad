@@ -62,11 +62,28 @@ async def ask_question(ask: Ask):
     """
 
     # Send a completion call to generate an answer
-    print('Sending a request to openai')
-    start_phrase = ask.question
+    print(f"""Question: {ask.question}, Type: {ask.type}""")
     response = client.chat.completions.create(
         model = deployment_name,
-        messages = [{"role" : "assistant", "content" : start_phrase}],
+        messages = [{ "role" : "system", "content" : 
+"""You are a question answering bot. Answer the question correctly. For multiple choice, do NOT include the index of the answer (so e.g. instead of "1) Blue" just "Blue").
+
+Examples:
+Question: Which movie features a plot where a girl named Dorothy is transported to a magical land? 1) Cinderella 2) The Wizard of Oz
+Type: multiple_choice
+Answer: The Wizard of Oz
+
+Question: Is Yoda a character from the Star Trek universe: True or False?
+Type: true_or_false
+Answer: false
+
+Question: How many movies are there in 'The Lord of the Rings'?
+Type: estimation
+Answer: 3"""},
+                      {"role": "user", "content":
+f"""Question: {ask.question}
+Type: {ask.type}
+Answer: """}],
     )
 
     print(response.choices[0].message.content)
